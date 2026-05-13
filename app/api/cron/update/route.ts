@@ -2,63 +2,56 @@ import { NextResponse } from 'next/server';
 import { Pool } from 'pg';
 import axios from 'axios';
 
-// The SSL settings are required for the Supabase pooler (port 6543)
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false 
-  }
+  ssl: { rejectUnauthorized: false }
 });
 
 export async function GET(request: Request) {
-  // 1. Security Check: Allows BOTH the browser link and Vercel Cron headers
   const { searchParams } = new URL(request.url);
-  const urlSecret = searchParams.get('secret');
-  const authHeader = request.headers.get('authorization');
-  
-  const isAuthorized = 
-    urlSecret === process.env.CRON_SECRET || 
-    authHeader === `Bearer ${process.env.CRON_SECRET}`;
-
-  if (!isAuthorized) {
+  if (searchParams.get('secret') !== process.env.CRON_SECRET) {
     return new Response('Unauthorized', { status: 401 });
   }
 
   try {
-    // 2. Fetch fresh odds from The-Odds-API
     const oddsRes = await axios.get(`https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/`, {
       params: { 
         apiKey: process.env.ODDS_API_KEY, 
         regions: 'us', 
         markets: 'h2h', 
-        bookmakers: 'fanduel' 
+        bookmakers: 'fanduel',
+        oddsFormat: 'american' // Matches your dashboard style
       }
     });
 
-    // 3. Loop through games and update the mlb_moneylines table
     for (const game of oddsRes.data) {
       const fanduel = game.bookmakers.find((b: any) => b.key === 'fanduel');
       if (!fanduel) continue;
 
-      const hOutcome = fanduel.markets[0].outcomes.find((o: any) => o.name === game.home_team);
-      const aOutcome = fanduel.markets[0].outcomes.find((o: any) => o.name === game.away_team);
+      for (const outcome of fanduel.markets[0].outcomes) {
+        const isHome = outcome.name === game.home_team;
+        // The-Odds-API provides home_pitcher/away_pitcher in the main game object
+        const pitcherName = isHome ? game.home_pitcher : game.away_pitcher;
 
-      if (hOutcome && aOutcome) {
         await pool.query(`
-          UPDATE mlb_moneylines 
-          SET price = $1, fetched_at = NOW() 
-          WHERE home_team = $2 AND away_team = $3`,
-          [hOutcome.price, game.home_team, game.away_team]
+          INSERT INTO mlb_moneylines (
+            event_id, home_team, away_team, commence_time, 
+            outcome_name, team_side, price, pitcher, fetched_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+          ON CONFLICT (event_id, outcome_name) 
+          DO UPDATE SET 
+            price = EXCLUDED.price,
+            pitcher = EXCLUDED.pitcher,
+            fetched_at = NOW();`,
+          [
+            game.id, game.home_team, game.away_team, game.commence_time,
+            outcome.name, isHome ? 'home' : 'away', outcome.price, pitcherName || 'TBD'
+          ]
         );
       }
     }
-
-    return NextResponse.json({ success: true, message: "8 AM Odds Synchronized" });
+    return NextResponse.json({ success: true, message: "Dashboard Data Synced" });
   } catch (err: any) {
-    console.error("Cron Error:", err.message);
-    return NextResponse.json(
-      { error: 'Update Failed', details: err.message }, 
-      { status: 500 }
-    );
+    return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
