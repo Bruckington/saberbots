@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { Pool } from 'pg';
 import axios from 'axios';
 
-// The Pooler connection requires SSL bypass for cloud environments like Vercel
+// The SSL settings are required for the Supabase pooler (port 6543)
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
@@ -11,10 +11,16 @@ const pool = new Pool({
 });
 
 export async function GET(request: Request) {
-  // 1. Security Check
-  // Note: Vercel Cron sends a Bearer token in the Authorization header
+  // 1. Security Check: Allows BOTH the browser link and Vercel Cron headers
+  const { searchParams } = new URL(request.url);
+  const urlSecret = searchParams.get('secret');
   const authHeader = request.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  
+  const isAuthorized = 
+    urlSecret === process.env.CRON_SECRET || 
+    authHeader === `Bearer ${process.env.CRON_SECRET}`;
+
+  if (!isAuthorized) {
     return new Response('Unauthorized', { status: 401 });
   }
 
@@ -38,7 +44,6 @@ export async function GET(request: Request) {
       const aOutcome = fanduel.markets[0].outcomes.find((o: any) => o.name === game.away_team);
 
       if (hOutcome && aOutcome) {
-        // Updating the price column for matched matchups
         await pool.query(`
           UPDATE mlb_moneylines 
           SET price = $1, fetched_at = NOW() 
