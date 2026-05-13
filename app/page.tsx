@@ -4,7 +4,7 @@ import { Calendar, TrendingUp, History, BarChart2, RefreshCw, Zap } from 'lucide
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState('today');
-  const [games, setGames] = useState([]);
+  const [games, setGames] = useState<any[]>([]); // Fix: Explicitly typed to avoid 'never[]' error
   const [loading, setLoading] = useState(true);
 
   const tabs = [
