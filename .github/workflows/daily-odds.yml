@@ -1,0 +1,14 @@
+name: Daily Odds Update
+on:
+  schedule:
+    - cron: '0 12 * * *' # 12:00 UTC is 8:00 AM EST
+  workflow_dispatch: # Allows you to run it manually for testing
+
+jobs:
+  ping-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Tychostats Update
+        run: |
+          curl -X GET "https://your-website-url.com/api/cron/update" \
+          -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
