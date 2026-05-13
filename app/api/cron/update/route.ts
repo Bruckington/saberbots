@@ -2,19 +2,19 @@ import { NextResponse } from 'next/server';
 import { Pool } from 'pg';
 import axios from 'axios';
 
+// The Pooler connection requires SSL bypass for cloud environments like Vercel
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
-    rejectUnauthorized: false // Required for Supabase production connections
+    rejectUnauthorized: false 
   }
 });
 
 export async function GET(request: Request) {
   // 1. Security Check
-  const { searchParams } = new URL(request.url);
-  const secret = searchParams.get('secret');
-  
-  if (secret !== process.env.CRON_SECRET) {
+  // Note: Vercel Cron sends a Bearer token in the Authorization header
+  const authHeader = request.headers.get('authorization');
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return new Response('Unauthorized', { status: 401 });
   }
 
@@ -29,7 +29,7 @@ export async function GET(request: Request) {
       }
     });
 
-    // 3. Loop through games and update your actual table: mlb_moneylines
+    // 3. Loop through games and update the mlb_moneylines table
     for (const game of oddsRes.data) {
       const fanduel = game.bookmakers.find((b: any) => b.key === 'fanduel');
       if (!fanduel) continue;
@@ -38,7 +38,7 @@ export async function GET(request: Request) {
       const aOutcome = fanduel.markets[0].outcomes.find((o: any) => o.name === game.away_team);
 
       if (hOutcome && aOutcome) {
-        // Updating the 'price' column in your mlb_moneylines table
+        // Updating the price column for matched matchups
         await pool.query(`
           UPDATE mlb_moneylines 
           SET price = $1, fetched_at = NOW() 
@@ -51,6 +51,9 @@ export async function GET(request: Request) {
     return NextResponse.json({ success: true, message: "8 AM Odds Synchronized" });
   } catch (err: any) {
     console.error("Cron Error:", err.message);
-    return NextResponse.json({ error: 'Update Failed', details: err.message }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Update Failed', details: err.message }, 
+      { status: 500 }
+    );
   }
 }
